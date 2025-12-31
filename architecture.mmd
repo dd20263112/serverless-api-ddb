@@ -1,43 +1,43 @@
 ```mermaid
 flowchart LR
   subgraph Client
-    U[Human user]
-    M[Machine client]
+    U["Human user"]
+    M["Machine client"]
   end
 
   subgraph Cognito
     UP[(User Pool)]
-    RSC[Resource Server\nscopes: items.read/items.write]
-    TOK[/oauth2/token\nclient_credentials/]
+    RSC["Resource Server\nscopes: items.read/items.write"]
+    TOK["/oauth2/token\nclient_credentials/"]
   end
 
-  subgraph API[API Gateway (REST) - Stage: Prod]
-    POST[POST /items\nCognito Authorizer (human)]
-    GETPUB[GET /items/{itemId}\npublic]
-    GETM[GET /machine/items/{itemId}\nCognito Authorizer + scopes]
+  subgraph API["API Gateway (REST) - Stage: Prod"]
+    POST["POST /items\nCognito Authorizer (human)"]
+    GETPUB["GET /items/{itemId}\npublic"]
+    GETM["GET /machine/items/{itemId}\nCognito Authorizer + scopes"]
   end
 
   subgraph Lambdas
-    C(CreateItemFunction)
-    G(GetItemFunction)
-    GM(GetItemMachineFunction)
-    AUD(ItemCreatedAuditLoggerFunction)
+    C["CreateItemFunction"]
+    G["GetItemFunction"]
+    GM["GetItemMachineFunction"]
+    AUD["ItemCreatedAuditLoggerFunction"]
   end
 
-  DDB[(DynamoDB\nserverless-api-ddb-items)]
-  EB[(EventBridge\nDefault bus)]
+  DDB["DynamoDB\nserverless-api-ddb-items"]
+  EB["EventBridge\nDefault bus"]
 
   U -->|ID token| POST
   POST --> C
   C --> DDB
-  C -->|PutEvents\nSource: serverless-api-ddb\nDetailType: ItemCreated| EB
+  C -->|"PutEvents\nSource: serverless-api-ddb\nDetailType: ItemCreated"| EB
   EB -->|Rule match| AUD
 
   GETPUB --> G
   G --> DDB
 
   M -->|client_id + client_secret| TOK
-  TOK -->|access token + scope\nserverless-api-ddb/items.read| GETM
+  TOK -->|"access token + scope\nserverless-api-ddb/items.read"| GETM
   GETM --> GM
   GM --> DDB
 
