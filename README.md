@@ -214,16 +214,6 @@ curl -s "${API_URL}/machine/items/item-003" \
 
 ---
 
-## What I’d add next (optional)
-
-If I were polishing this further for production patterns:
-- DLQ for the subscriber Lambda
-- structured logging + correlation id
-- basic unit tests (Jest)
-- request validation (API Gateway models or Lambda-side)
-
----
-
 ## License
 
 MIT (or choose your preferred license)
