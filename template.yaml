@@ -1,0 +1,205 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Serverless API (API Gateway + Lambda + DynamoDB)
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 30
+    MemorySize: 128
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref ItemsTable
+
+Resources:
+  ItemsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: serverless-api-ddb-items
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: itemId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: itemId
+          KeyType: HASH
+  MyUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: serverless-api-ddb-poc-userpool
+      UsernameAttributes:
+       - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false  
+  MyUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref MyUserPool
+      Domain: serverless-api-ddb-poc        
+  MyResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref MyUserPool
+      Identifier: serverless-api-ddb
+      Name: serverless-api-ddb
+      Scopes:
+        - ScopeName: items.read
+          ScopeDescription: Read items
+        - ScopeName: items.write
+          ScopeDescription: Write items        
+  MyUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref MyUserPool
+      ClientName: serverless-api-ddb-poc-client
+      GenerateSecret: false     
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH   
+  MyMachineClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: MyResourceServer
+    Properties:
+      UserPoolId: !Ref MyUserPool
+      ClientName: serverless-api-ddb-poc-machine-client
+      GenerateSecret: true
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - serverless-api-ddb/items.read
+        - serverless-api-ddb/items.write
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Auth:
+        Authorizers:
+          MyCognitoAuthorizer:
+            UserPoolArn: !GetAtt MyUserPool.Arn
+          MyMachineAuthorizer:
+            UserPoolArn: !GetAtt MyUserPool.Arn 
+
+  CreateItemFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/createItem/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ItemsTable
+        - Statement:
+            - Effect: Allow
+              Action: events:PutEvents
+              Resource: !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/default    
+      Events:
+        CreateItem:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /items
+            Method: post
+            Auth:
+              Authorizer: MyCognitoAuthorizer
+              
+  GetItemMachineFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/getItemMachine/
+      Handler: index.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ItemsTable
+      Events:
+        GetItemMachine:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /machine/items/{itemId}
+            Method: get
+            Auth:
+              Authorizer: MyMachineAuthorizer
+              AuthorizationScopes:
+                - serverless-api-ddb/items.read
+
+  GetItemFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/getItem/
+      Handler: index.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ItemsTable
+      Events:
+        GetItem:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /items/{itemId}
+            Method: get
+
+  ItemCreatedAuditLoggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/itemCreatedAuditLogger/
+      Handler: index.handler
+      Runtime: nodejs20.x
+      Timeout: 10       
+      Events:
+        ItemCreatedRule:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source: 
+                - serverless-api-ddb
+              detail-type:
+                - ItemCreated   
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref MyUserPool
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolId"
+
+  CognitoUserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref MyUserPoolClient
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolClientId"    
+
+  CognitoMachineClientId:
+    Description: Cognito Machine Client ID
+    Value: !Ref MyMachineClient
+    Export:
+      Name: !Sub "${AWS::StackName}-MachineClientId"
+
+  CognitoUserPoolDomain:
+    Description: Cognito User Pool Domain (for /oauth2/token)
+    Value: !Ref MyUserPoolDomain
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolDomain"
+
+  CognitoTokenEndpoint:
+    Description: Cognito OAuth 2.0 token endpoint (for client credentials)
+    Value: !Sub "https://${MyUserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/oauth2/token"
+    Export:
+      Name: !Sub "${AWS::StackName}-TokenEndpoint"
+
+  CognitoMachineClientSecret:
+    Description: Cognito Machine Client Secret (from console)
+    Value: "Check Cognito console for client secret"
+    Export:
+      Name: !Sub "${AWS::StackName}-MachineClientSecret"
+    
